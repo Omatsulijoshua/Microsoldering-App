@@ -1,0 +1,267 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  TECHNICIAN
+  SHOP_OWNER
+  VIEWER
+}
+
+enum TicketStatus {
+  RECEIVED
+  DIAGNOSING
+  WAITING_FOR_APPROVAL
+  WAITING_FOR_PARTS
+  IN_REPAIR
+  TESTING
+  FIXED
+  NOT_REPAIRABLE
+  RETURNED
+  CANCELLED
+}
+
+model User {
+  id            String         @id @default(uuid())
+  name          String
+  email         String         @unique
+  passwordHash  String
+  role          UserRole       @default(TECHNICIAN)
+  shopId        String?
+  shop          Shop?          @relation(fields: [shopId], references: [id])
+  status        String         @default("ACTIVE") // ACTIVE, SUSPENDED
+  emailVerified Boolean        @default(false)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  repairCases   RepairCase[]
+  auditLogs     AuditLog[]
+  subscriptions Subscription[]
+  payments      Payment[]
+  notifications Notification[]
+  kbArticles    KnowledgeBaseArticle[]
+}
+
+model Shop {
+  id          String       @id @default(uuid())
+  name        String
+  address     String?
+  phone       String?
+  email       String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  members     User[]
+  repairCases RepairCase[]
+}
+
+model Brand {
+  id          String           @id @default(uuid())
+  name        String           @unique
+  logo        String?          // URL
+  description String?
+  categories  DeviceCategory[]
+  models      DeviceModel[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+model DeviceCategory {
+  id          String        @id @default(uuid())
+  brandId     String
+  brand       Brand         @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  models      DeviceModel[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@unique([brandId, name])
+}
+
+model DeviceModel {
+  id          String           @id @default(uuid())
+  brandId     String
+  brand       Brand            @relation(fields: [brandId], references: [id])
+  categoryId  String
+  category    DeviceCategory   @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  name        String
+  modelNumber String?
+  year        Int?
+  notes       String?
+  repairCases RepairCase[]
+  kbArticles  KnowledgeBaseArticle[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@unique([brandId, categoryId, name])
+}
+
+model DiagnosisMethod {
+  id                  String   @id @default(uuid())
+  name                String   // e.g. "Panic Log", "USB Diagnosis"
+  type                String   // e.g. "PANIC", "USB", "SYMPTOM", "BOARD"
+  supportedBrandId    String?
+  supportedCategoryId String?
+  supportedModelId    String?
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+model RepairCase {
+  id                String             @id @default(uuid())
+  caseNumber        String             @unique // e.g. "MC-2026-0001"
+  userId            String
+  technician        User               @relation(fields: [userId], references: [id])
+  shopId            String?
+  shop              Shop?              @relation(fields: [shopId], references: [id])
+  customerName      String
+  customerContact   String
+  brandId           String
+  categoryId        String
+  modelId           String
+  model             DeviceModel        @relation(fields: [modelId], references: [id])
+  reportedFault     String
+  physicalCondition String?
+  waterDamage       Boolean            @default(false)
+  previousRepair    Boolean            @default(false)
+  diagnosisSummary  String?
+  status            TicketStatus       @default(RECEIVED)
+  estimatedCost     Decimal            @default(0.00)
+  finalCost         Decimal            @default(0.00)
+  notes             String?
+  partsRequired     Json?              // String array or object
+  partsUsed         Json?              // Object containing cost and names
+  files             RepairCaseFile[]
+  diagnosisResults  DiagnosisResult[]
+  measurements      Measurement[]
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+}
+
+model RepairCaseFile {
+  id           String     @id @default(uuid())
+  repairCaseId String
+  repairCase   RepairCase @relation(fields: [repairCaseId], references: [id], onDelete: Cascade)
+  fileName     String
+  fileUrl      String
+  fileType     String     // e.g. "IMAGE", "PDF", "LOG"
+  fileSize     Int
+  createdAt    DateTime   @default(now())
+}
+
+model DiagnosisResult {
+  id                String     @id @default(uuid())
+  repairCaseId      String
+  repairCase        RepairCase @relation(fields: [repairCaseId], references: [id], onDelete: Cascade)
+  method            String     // SYMPTOM, PANIC, ADB, WINDOWS_EVENT
+  inputText         String     // Pasted logs or symptoms
+  aiSummary         String
+  likelyFaults      Json       // Array of faults, confidence, components
+  confidenceScore   Float
+  recommendedTests  Json
+  repairSteps       Json
+  createdAt         DateTime   @default(now())
+}
+
+model Measurement {
+  id              String     @id @default(uuid())
+  repairCaseId    String
+  repairCase      RepairCase @relation(fields: [repairCaseId], references: [id], onDelete: Cascade)
+  railName        String
+  expectedValue   String?
+  measuredValue   String
+  measurementType String     // VOLTAGE, RESISTANCE, DIODE
+  status          String     // NORMAL, SUSPICIOUS, FAILED, UNKNOWN
+  notes           String?
+  createdAt       DateTime   @default(now())
+}
+
+model KnowledgeBaseArticle {
+  id         String       @id @default(uuid())
+  title      String
+  content    String       // Markdown text
+  brandId    String?
+  categoryId String?
+  modelId    String?
+  model      DeviceModel? @relation(fields: [modelId], references: [id])
+  faultType  String?
+  symptoms   String[]
+  cause      String?
+  solution   String?
+  difficulty String?      // EASY, MEDIUM, HARD
+  visibility String       // PUBLIC, PRO, ADMIN
+  createdBy  String
+  author     User         @relation(fields: [createdBy], references: [id])
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+}
+
+model SubscriptionPlan {
+  id            String         @id @default(uuid())
+  name          String
+  code          String         @unique // FREE, PRO, SHOP, ENTERPRISE
+  description   String?
+  price         Decimal
+  features      Json
+  isActive      Boolean        @default(true)
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id           String           @id @default(uuid())
+  userId       String
+  user         User             @relation(fields: [userId], references: [id])
+  planId       String
+  plan         SubscriptionPlan @relation(fields: [planId], references: [id])
+  status       String           // ACTIVE, EXPIRED, CANCELLED
+  startDate    DateTime         @default(now())
+  endDate      DateTime
+  paystackRef  String?
+  createdAt    DateTime         @default(now())
+}
+
+model Payment {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  amount    Decimal
+  status    String   // PENDING, SUCCESSFUL, FAILED
+  reference String   @unique
+  gateway   String   // PAYSTACK, FLUTTERWAVE, MANUAL
+  date      DateTime @default(now())
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  action    String   // e.g. "USER_LOGIN", "UPDATE_TICKET"
+  details   String
+  ipAddress String?
+  createdAt DateTime @default(now())
+}
+
+model AIProviderSetting {
+  id           String  @id @default(uuid())
+  providerName String  // e.g. "OPENAI", "ANTHROPIC", "LOCAL"
+  apiKey       String
+  modelName    String  // e.g. "gpt-4-turbo"
+  isActive     Boolean @default(true)
+}
